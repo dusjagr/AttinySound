@@ -1,17 +1,22 @@
 /*
 
-  Testprogram for the hardware of the 8Bit synthesizer
+  Testprogram to check the noise of the ADC
   
   8BitMixedTape-SoundProg2085
   Berliner Schule
   Version 0.8 Neo
 
-  With this software you can test if your hardware is working correct.
-  The speacker makes a beep sound.
-  The value of the potientiometer is displayed as binary value on the leds.
-  One potientiometer is displayed in green and the other one is displayed in blue.
-  You can press the buttons. They are displayed in red. If both buttons are pressed,
-  it will make a sound.
+  The noise power of the ADC is measured and displayed as binary value on the
+  neopixels.
+
+  You can chouse the ADC of the left and the right channel with the buttons.
+
+  On my setup the noise of the ADC is close to zero. 
+  When I turn the POTI, there are certain points where the noise goes up to 
+  6 LEDs. This are the points where the ADC switches between two digital values.
+
+  If I touch the ADC-Input with the finger, the noise will overshoot and all pixel
+  become red.
 
 *************************************************************************************
 
@@ -22,7 +27,7 @@
 
 ********************************** list of outhors **********************************
 
-  v0.1  15.2.2017 C. -H-A-B-E-R-E-R-  initial version
+  v0.1  22.2.2017 C. -H-A-B-E-R-E-R-  initial version
 
   It is mandatory to keep the list of authors in this code.
   Please add your name if you improve/extend something
@@ -53,7 +58,7 @@
 #endif
 
 // hardware description / pin connections
-#define SPEAKERPIN      1
+
 #define NEOPIXELPIN     0
 
 #define POTI_LEFT      A1
@@ -64,28 +69,7 @@
 
 Adafruit_NeoPixel pixels = Adafruit_NeoPixel(NUMPIXELS, NEOPIXELPIN, NEO_GRB + NEO_KHZ800);
 
-// fast pin access
-#define AUDIOPIN (1<<SPEAKERPIN)
-#define PINLOW (PORTB&=~AUDIOPIN)
-#define PINHIGH (PORTB|=AUDIOPIN)
 
-void playSound(long freq_Hz, long duration_ms)
-{
-  uint16_t n;
-  uint32_t delayTime_us;
-  uint32_t counts;
-
-  delayTime_us = 1000000UL / freq_Hz / 2;
-  counts = duration_ms * 1000 / delayTime_us;
-
-  for (n = 0; n < counts; n++)
-  {
-    PINHIGH;
-    delayMicroseconds(delayTime_us);
-    PINLOW;
-    delayMicroseconds(delayTime_us);
-  }
-}
 
 void setup()
 {
@@ -95,11 +79,9 @@ void setup()
 
   pixels.begin(); // This initializes the NeoPixel library.
 
-  pinMode(SPEAKERPIN, OUTPUT);
   //analogReference( INTERNAL2V56 );
-  playSound(1000, 100); // beep
-}
 
+}
 
 /*
   uint8_t getButton()
@@ -127,7 +109,6 @@ void displayBinrayValue(uint16_t value, uint32_t color)
   for (n = 0; n < NUMPIXELS; n++)
   {
     if (value & (1 << n)) pixels.setPixelColor(n, color);
-    //else pixels.setPixelColor(n,0); // off
   }
 }
 
@@ -136,29 +117,57 @@ void setColorAllPixel(uint32_t color)
   uint8_t n;
   for (n = 0; n < NUMPIXELS; n++)
   {
-    pixels.setPixelColor(n, color); 
+    pixels.setPixelColor(n, color); // off
   }
 }
 
+#define NUMBER_OF_SAMPLES 100
+int16_t Values[NUMBER_OF_SAMPLES];
+
 void loop()
 {
+  uint16_t n;
+  static uint8_t adcChannelSelector=0;
+  
+  float meanValue=0;
 
-  uint16_t p1 = analogRead(POTI_LEFT);
-  uint16_t p2 = analogRead(POTI_RIGHT);
+  for(n=0;n<NUMBER_OF_SAMPLES;n++)
+  {
+    uint16_t p1;
+
+    uint16_t value;
+    if(adcChannelSelector==0) value=analogRead(POTI_LEFT);
+    else value = analogRead(POTI_RIGHT);
+    
+    Values[n]=value;
+    meanValue+=value;
+  }
+  meanValue = meanValue/NUMBER_OF_SAMPLES;
+
+  float noisePower=0;
+  for( n=0; n<NUMBER_OF_SAMPLES; n++)
+  {
+    noisePower+=(Values[n]-meanValue)*(Values[n]-meanValue);
+  }
 
   setColorAllPixel(0); // pixels off
+  
+  uint32_t color;
+  if( adcChannelSelector==0 ) color = pixels.Color(0, 15, 0);
+  else                        color = pixels.Color(0, 0, 15);
+  
+  if( noisePower < 256 )
+  {
+    displayBinrayValue( noisePower, color);
+  }else // overflow: make all pixels red
+  { 
+    setColorAllPixel(pixels.Color(15, 0, 0)); // pixels off
+  }
 
-  displayBinrayValue( p1 / 4, pixels.Color(0, 15, 0));
-  displayBinrayValue( p2 / 4, pixels.Color(0, 0, 15));
-
-  //pixels.setPixelColor(0, 0); // off
-  //pixels.setPixelColor(1, 0); // off
-
-  uint8_t x = getButton();
-  if (x & 1) pixels.setPixelColor(0, pixels.Color(15, 0, 0));
-  if (x & 2) pixels.setPixelColor(1, pixels.Color(15, 0, 0));
   pixels.show(); // This sends the updated pixel color to the hardware.
 
-  if (x == 3)playSound(p1 + 300, 100);
+  uint8_t x = getButton();
+  if (x & 1) adcChannelSelector=0;
+  if (x & 2) adcChannelSelector=1;
 
 }
